@@ -1,7 +1,7 @@
 import { saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 
-const { eventSource, event_types } = SillyTavern.getContext();
+const { eventSource, event_types, registerMacro } = SillyTavern.getContext();
 
 const extensionName = 'RabbitNumeralRandomizer';
 const extensionFolderPath = `third-party/${extensionName}`;
@@ -275,7 +275,7 @@ function getRandomFallbackWords(count) {
 // Extract a random meaningful word from the last user message (for contextual Datamuse mode)
 async function extractRandomWordFromMessage() {
     try {
-        const context = getContext();
+        const context = SillyTavern.getContext();
         const chat = context.chat;
 
         if (!chat || chat.length === 0) return null;
@@ -1132,7 +1132,14 @@ function updateRelationshipDescription() {
 globalThis.rabbitNumeralRandomizerInterceptor = async function(chat, contextSize, abort, type) {
     try {
         const settings = extension_settings[extensionName];
-        if (!settings || !settings.randomWords?.enabled) {
+        if (!settings) return;
+
+        // Always prepare random words for macro filling
+        if (!settings.randomWords?.enabled) {
+            console.log('🐰 Rabbit Interceptor: Random words disabled — macro mode only');
+            // Generate words silently for macro, no injection
+            const words = await getRandomWords(3);
+            globalThis.lastRabbitWords = words.map(w => typeof w === 'object' ? w.word : w);
             return;
         }
 
@@ -1210,7 +1217,32 @@ globalThis.rabbitNumeralRandomizerInterceptor = async function(chat, contextSize
 
 // Initialize extension
 jQuery(async () => {
+    // Create UI and load settings as before
     createSettingsUI();
     loadSettings();
+    // --- Register Global Macro: {{words}} ---
+    registerMacro('words', (nonce) => {
+        try {
+            const rw = extension_settings[extensionName]?.randomWords ?? {};
+            const count = Number.isFinite(rw.wordCount) && rw.wordCount > 0
+                ? rw.wordCount
+                : 3;
+            const rawCandidates = getRandomFallbackWords(count * 3);
+            let filtered = filterWords(rawCandidates);
+            if (filtered.length < count) {
+                const extra = getRandomFallbackWords(count - filtered.length);
+                filtered = filtered.concat(extra);
+            }
+            const picked = filtered.slice(0, count);
+            addToHistory(picked);
+            const wordStrings = picked.map(w => typeof w === 'object' ? w.word : w);
+            updateHeaderWithWords(wordStrings);
+            return wordStrings.join(', ');
+        } catch (err) {
+            console.error('🐰 Rabbit Macro: Error generating words:', err);
+            return '(error)';
+        }
+    });
+    console.log('🐰 Rabbit Macro: {{words}} macro registered globally');
     console.log('🐰 Rabbit Response Team: Extension initialized');
 });
