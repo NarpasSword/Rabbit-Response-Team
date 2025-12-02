@@ -1,6 +1,7 @@
 {
     "display_name": "Rabbit Response Team",
     "loading_order": 100,
+    "generate_interceptor": "rabbitNumeralRandomizerInterceptor",
     "requires": [],
     "optional": [],
     "js": "index.js",

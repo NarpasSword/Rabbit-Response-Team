@@ -654,36 +654,36 @@ async function getRandomWords(count) {
 }
 
 // Inject words into prompt - EPHEMERAL, at the VERY BOTTOM
-eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, async (eventData) => {
-    const settings = extension_settings[extensionName];
-    const rw = settings.randomWords;
+// eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, async (eventData) => {
+//     const settings = extension_settings[extensionName];
+//     const rw = settings.randomWords;
 
-    if (!rw.enabled) {
-        return;
-    }
+//     if (!rw.enabled) {
+//         return;
+//     }
 
-    if (!eventData || eventData.dryRun) {
-        console.log('🐰 Rabbit Response Team: Skipping injection (dry run)');
-        return;
-    }
+//     if (!eventData || eventData.dryRun) {
+//         console.log('🐰 Rabbit Response Team: Skipping injection (dry run)');
+//         return;
+//     }
 
-    if (!eventData.chat || eventData.chat.length === 0) {
-        console.log('🐰 Rabbit Response Team: Skipping injection (no chat data)');
-        return;
-    }
+//     if (!eventData.chat || eventData.chat.length === 0) {
+//         console.log('🐰 Rabbit Response Team: Skipping injection (no chat data)');
+//         return;
+//     }
 
-    // RANDOM WORDS INJECTION ONLY
-    const minLength = rw.minMessageLength;
-    if (minLength > 0 && eventData.chat.length > 0) {
-        const lastMessage = eventData.chat[eventData.chat.length - 1];
-        if (lastMessage && lastMessage.content && lastMessage.content.length < minLength) {
-            console.log(`🐰 Rabbit Response Team (Random): Skipping injection (message length ${lastMessage.content.length} < ${minLength})`);
-            return;
-        }
-    }
+//     // RANDOM WORDS INJECTION ONLY
+//     const minLength = rw.minMessageLength;
+//     if (minLength > 0 && eventData.chat.length > 0) {
+//         const lastMessage = eventData.chat[eventData.chat.length - 1];
+//         if (lastMessage && lastMessage.content && lastMessage.content.length < minLength) {
+//             console.log(`🐰 Rabbit Response Team (Random): Skipping injection (message length ${lastMessage.content.length} < ${minLength})`);
+//             return;
+//         }
+//     }
 
-    await injectRandomWords(eventData, rw);
-});
+//     await injectRandomWords(eventData, rw);
+// });
 
 // Inject random words
 async function injectRandomWords(eventData, settings) {
@@ -1209,6 +1209,86 @@ function updateRelationshipDescription() {
     };
     $('#rabbit_relationship_desc').text(descriptions[relType] || '');
 }
+
+// Global interceptor so Rabbit works with BOTH Chat Completion and Text Completion
+globalThis.rabbitNumeralRandomizerInterceptor = async function(chat, contextSize, abort, type) {
+    try {
+        const settings = extension_settings[extensionName];
+        if (!settings || !settings.randomWords?.enabled) {
+            return;
+        }
+
+        const rw = settings.randomWords;
+
+        // Find last user message in the chat history
+        let lastUserIndex = -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i].is_user) {
+                lastUserIndex = i;
+                break;
+            }
+        }
+
+        if (lastUserIndex === -1) {
+            console.log('🐰 Rabbit Response Team: No user message found, skipping interceptor');
+            return;
+        }
+
+        const lastUserMes = chat[lastUserIndex].mes || '';
+        const minLength = rw.minMessageLength ?? 0;
+
+        if (minLength > 0 && lastUserMes.length < minLength) {
+            console.log(`🐰 Rabbit Response Team: Skipping (last message length ${lastUserMes.length} < ${minLength})`);
+            return;
+        }
+
+        // Get random words using your existing logic
+        const count = rw.wordCount || 3;
+        const randomWords = await getRandomWords(count);
+
+        if (!randomWords || randomWords.length === 0) {
+            console.warn('🐰 Rabbit Response Team: Interceptor got no words');
+            return;
+        }
+
+        // Extract word strings (handles object-with-definition or plain strings)
+        const wordStrings = randomWords.map(w => typeof w === 'object' ? w.word : w);
+
+        let wordListFormatted;
+        if (rw.includeDefinitions && typeof randomWords[0] === 'object') {
+            wordListFormatted = randomWords.map(item => {
+                if (item.definition) {
+                    return `"${item.word}" (${item.definition})`;
+                }
+                return `"${item.word}"`;
+            }).join(', ');
+        } else {
+            wordListFormatted = wordStrings.map(w => `"${w}"`).join(', ');
+        }
+
+        const promptTemplate = rw.customPrompt || DEFAULT_RANDOM_PROMPT;
+        const injectionText = promptTemplate.replace('{{words}}', wordListFormatted);
+
+        console.log('🐰 Rabbit Response Team: Interceptor injecting words:', wordStrings);
+
+        // Build a system-like message that will be turned into prompt text
+        const injectionMessage = {
+            is_user: false,
+            is_system: true,
+            name: 'Rabbit Response Team',
+            send_date: Date.now(),
+            mes: injectionText,
+        };
+
+        // Insert just before the last user message so it applies to that turn
+        chat.splice(lastUserIndex, 0, injectionMessage);
+
+        // Update the little header in your UI
+        updateHeaderWithWords(wordStrings);
+    } catch (error) {
+        console.error('🐰 Rabbit Response Team: Error in generate interceptor:', error);
+    }
+};
 
 // Initialize extension
 jQuery(async () => {
